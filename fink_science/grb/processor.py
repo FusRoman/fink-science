@@ -28,7 +28,45 @@ def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb
     """
     Associates ztf objects and grb events by temporal and spatial cross-match.
 
+    Parameters
+    ----------
+    ra : list
+        right ascension of alerts
+    dec : list
+        declination of alerts
+    jdstarthist : list
+        first time that the alerts begun to variates
+    objectId : list
+        object identifier of the alerts
+    grb_bc : dataframe
+        the grb events catalog send to executor with a broadcast
+    monitor : string
+        the name of the grb monitor used to download the catalog
+    grb_tw : integer
+        the bottom limit of the time window
 
+    Return
+    ------
+    grb_associations : dataframe
+        A dataframe containing the informations of the associations :
+            - firstly, a tag that indicates what process has produced the associations
+                'proba-based-cross-match' -> the grb has been associated by probability.
+                'fast-transient-based-cross-match' -> the grb has been associated because
+                    the ztf alerts fall within the grb error box, has a low associations 
+                    probability but behave like a fast transient.
+            - secondly, for the ztf object associated with a grb events by probability, 
+                one return all the following informations :
+                    - trigger number of the grb event
+                    - probability that the ztf object and grb event can be associated in general
+                    - sigma error of the above probability
+                    - probability that the ztf object can ben associated with a long grb.
+                    - sigma error of the above probability
+                    - probability that the ztf object can ben associated with a short grb.
+                    - sigma error of the above probability
+                As a ztf alert can fall within multiples error boxes if two or more grb events occurs closely,
+                one return a list for all of the above items
+        
+        In case of non associations, one return the 'No match' tag and empty lists for the probabilities.
     """
     day_sec = 24 * 3600 * grb_tw
     bottomlimit_window = Time.now().jd - TimeDelta(day_sec, format="sec").jd
@@ -41,8 +79,10 @@ def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb
     )
 
     @pandas_udf(grb_schema)
-    def aux_grb_score(ra, dec, jdstarthist, objectId):
-
+    def aux_grb_score(ra: list, dec: list, jdstarthist: list, objectId: list):
+        """
+        see the documentation of the main function
+        """
         grb_notices = grb_bc.value
 
         ztf_pdf = pd.DataFrame(

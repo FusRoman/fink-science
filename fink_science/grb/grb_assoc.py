@@ -51,7 +51,7 @@ def grb_notices_getter(monitor: string)-> tuple:
         raise ValueError("monitor must be 'fermi' of 'swift', not {}".format(monitor))
 
 
-def grb_associations(ztf_rows: pd.Series, grb_notices: pd.DataFrame, monitor: string, bottomlimit_window: float)-> tuple:
+def cross_match_space_and_time(ztf_rows: pd.Series, grb_notices: pd.DataFrame, monitor: string, bottomlimit_window: float)-> tuple:
     """
     Associates a ztf object with one or more grb events. 
 

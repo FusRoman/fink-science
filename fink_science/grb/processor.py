@@ -1,28 +1,17 @@
 import string
-from matplotlib import units
 import pandas as pd
-import numpy as np
 
-from utilities import get_last_ztf_alert
 from grb_catalog import get_notice, get_grb_in_tw
 from astropy.time import Time, TimeDelta
-from astropy.coordinates import SkyCoord
-from astropy.coordinates import search_around_sky
-import astropy.units as u
 
 from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import *  # noqa: F403
 from pyspark.sql import functions as F  # noqa: F401
 from pyspark.sql import SparkSession  # noqa: F401
 
-import requests
-import time as t
-
-import datetime
 import json
 
-from grb_assoc import grb_associations
-
+from grb_assoc import cross_match_space_and_time
 
 def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb_bc: pd.DataFrame, monitor: string, grb_tw: int)-> pd.DataFrame:
     """
@@ -79,7 +68,7 @@ def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb
     )
 
     @pandas_udf(grb_schema)
-    def aux_grb_score(ra: list, dec: list, jdstarthist: list, objectId: list):
+    def aux_grb_score(ra, dec, jdstarthist, objectId):
         """
         see the documentation of the main function
         """
@@ -90,7 +79,7 @@ def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb
         )
 
         grb_res_assoc = ztf_pdf.apply(
-            lambda x: grb_associations(x, grb_notices, monitor, bottomlimit_window),
+            lambda x: cross_match_space_and_time(x, grb_notices, monitor, bottomlimit_window),
             axis=1,
             result_type="expand",
         ).rename({0: "tags", 1: "grb_association"}, axis=1)
@@ -188,8 +177,11 @@ if __name__ == "__main__":
         )
         p_grb_list.append(p_grb)
 
-    
+
     print([sc_p_grb.rdd.getNumPartitions() for sc_p_grb in p_grb_list])
     res_grb = pd.concat([sc_p_grb.toPandas() for sc_p_grb in p_grb_list])
 
     print(res_grb)
+
+    from collections import Counter
+    print(Counter(res_grb["tags"]))

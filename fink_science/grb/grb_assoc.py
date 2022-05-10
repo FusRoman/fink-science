@@ -204,7 +204,7 @@ def cross_match_space_and_time(
                 return "Before the GRB trigger time", []
 
         else:
-            return "No in any GRB error box", []
+            return "Not in any GRB error box", []
 
     else:
-        return "Not close at all of a GRB", []
+        return "Start variation time not in the GRB time window", []

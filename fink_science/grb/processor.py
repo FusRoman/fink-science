@@ -3,6 +3,7 @@ import string
 import pandas as pd
 import json
 from datetime import datetime
+from datetime import timedelta
 
 from astropy.time import Time, TimeDelta
 
@@ -20,6 +21,7 @@ from grb_catalog import get_notice, get_grb_in_tw
 def grb_associations(
     ra: list,
     dec: list,
+    jd: list,
     jdstarthist: list,
     objectId: list,
     grb_bc: pd.DataFrame,
@@ -36,6 +38,8 @@ def grb_associations(
         right ascension of alerts
     dec : list
         declination of alerts
+    jd : list
+        start exposure time of the alerts
     jdstarthist : list
         first time that the alerts begun to variates
     objectId : list
@@ -44,11 +48,11 @@ def grb_associations(
         the grb events catalog send to executor with a broadcast
     monitor : string
         the name of the grb monitor used to download the catalog
-    grb_tw : integer
-        the bottom limit of the time window, in days
     start_grb_tw : datetime
         The start date of the time window, all the ztf alerts that respect jdstarthist >= (start_grb_tw - grb_tw) and jd <= start_grb_tw
         are tested for the association with a grb.
+    grb_tw : integer
+        the bottom limit of the time window, in days
 
     Return
     ------
@@ -74,8 +78,8 @@ def grb_associations(
         In case of non associations, one return the 'No match' tag and empty lists for the probabilities.
     """
     day_sec = 24 * 3600 * grb_tw
-    start_wd_astropy = Time(start_grb_tw, scale='utc').jd
-    bottomlimit_window = start_wd_astropy - TimeDelta(day_sec, format="sec").jd
+    start_wd_jd = Time(start_grb_tw, scale="utc").jd
+    bottomlimit_window = start_wd_jd - TimeDelta(day_sec, format="sec").jd
 
     grb_schema = StructType(
         [
@@ -85,19 +89,25 @@ def grb_associations(
     )
 
     @pandas_udf(grb_schema)
-    def aux_grb_score(ra, dec, jdstarthist, objectId):
+    def aux_grb_score(ra, dec, jd, jdstarthist, objectId):
         """
         see the documentation of the main function
         """
         grb_notices = grb_bc.value
 
         ztf_pdf = pd.DataFrame(
-            {"ra": ra, "dec": dec, "jdstarthist": jdstarthist, "objectId": objectId}
+            {
+                "ra": ra,
+                "dec": dec,
+                "jd": jd,
+                "jdstarthist": jdstarthist,
+                "objectId": objectId,
+            }
         )
 
         grb_res_assoc = ztf_pdf.apply(
             lambda x: cross_match_space_and_time(
-                x, grb_notices, monitor, start_wd_astropy, bottomlimit_window
+                x, grb_notices, monitor, start_wd_jd, bottomlimit_window
             ),
             axis=1,
             result_type="expand",
@@ -105,28 +115,37 @@ def grb_associations(
 
         return grb_res_assoc
 
-    return aux_grb_score(ra, dec, jdstarthist, objectId)
+    return aux_grb_score(ra, dec, jd, jdstarthist, objectId)
 
 
-if __name__ == "__main__":
+def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width):
 
-    import time as t
-
-    print("get grb notices")
-
-    monitor = "swift"
-    start_window = datetime.fromisoformat("2021-02-11")
-    grb_tw = 5
-
-    grb_notices = get_notice(monitor)
-
-    grb_notices = get_grb_in_tw(grb_notices, monitor, start_window, grb_tw)
+    grb_notices = get_grb_in_tw(grb_notices, monitor, start_window, grb_window_width)
 
     # cast the columns to numeric types
     get_num_cols = list(grb_notices_getter(monitor))[:-1]
     grb_notices[get_num_cols] = grb_notices[get_num_cols].apply(pd.to_numeric)
 
     print("nb grb in the time window : {}".format(len(grb_notices)))
+
+    if len(grb_notices) == 0:
+        return pd.DataFrame(
+            columns=[
+                "jd",
+                "jdstarthist",
+                "ra",
+                "dec",
+                "objectId",
+                "tags",
+                "GRB_trignum",
+                "p_ser",
+                "sigma_p_ser",
+                "lp_ser",
+                "sigma_lp_ser",
+                "sp_ser",
+                "sigma_sp_ser",
+            ]
+        )
 
     # load alerts from HBase, best way to do
 
@@ -144,7 +163,7 @@ if __name__ == "__main__":
         SparkSession.builder.master(master_adress).appName("grb_module").getOrCreate()
     )
 
-    spark.sparkContext.setLogLevel("ERROR")
+    spark.sparkContext.setLogLevel("FATAL")
 
     t_before = t.time()
     df = (
@@ -153,7 +172,7 @@ if __name__ == "__main__":
         .option("hbase.spark.use.hbasecontext", False)
         .option("hbase.spark.pushdown.columnfilter", True)
         .load()
-        .repartition(5000)
+        .repartition(500)
     )
     print("loading time: {}".format(t.time() - t_before))
     print()
@@ -164,7 +183,7 @@ if __name__ == "__main__":
         "SN candidate",
     ]
 
-    start_wd_astropy = Time(start_window, scale='utc').jd
+    start_wd_astropy = Time(start_window, scale="utc").jd
     yesterday = start_wd_astropy - TimeDelta(3600 * 36, format="sec").jd
     class_pdf = []
 
@@ -175,15 +194,14 @@ if __name__ == "__main__":
             ).filter(df["class_jd_objectId"] < "{}_{}".format(_class, start_wd_astropy))
         )
 
-    print()
-    for class_name, sc_class in zip(request_class, class_pdf):
-        print("class {} : nb alerts = {}".format(class_name, sc_class.count()))
-    print()
-
+    # send the grb data to the executors
     grb_bc = spark.sparkContext.broadcast(grb_notices)
 
     p_grb_list = []
     for alert_class in class_pdf:
+
+        if alert_class.count() == 0:
+            continue
 
         alert_class = alert_class
 
@@ -192,11 +210,13 @@ if __name__ == "__main__":
             grb_associations(
                 alert_class.ra,
                 alert_class.dec,
+                alert_class.jd,
                 alert_class.jdstarthist,
                 alert_class.objectId,
                 grb_bc,
                 monitor,
-                grb_tw,
+                start_window,
+                grb_window_width,
             ),
         )
 
@@ -219,12 +239,59 @@ if __name__ == "__main__":
         )
         p_grb_list.append(p_grb)
 
+    if len(p_grb_list) == 0:
+        return pd.DataFrame(
+            columns=[
+                "jd",
+                "jdstarthist",
+                "ra",
+                "dec",
+                "objectId",
+                "tags",
+                "GRB_trignum",
+                "p_ser",
+                "sigma_p_ser",
+                "lp_ser",
+                "sigma_lp_ser",
+                "sp_ser",
+                "sigma_sp_ser",
+            ]
+        )
+
     t_before = t.time()
     res_grb = pd.concat([sc_p_grb.toPandas() for sc_p_grb in p_grb_list])
     print("spark jobs total time: {}".format(t.time() - t_before))
 
-    print(res_grb)
+    return res_grb
 
+
+if __name__ == "__main__":
+
+    import time as t
     from collections import Counter
 
-    print(Counter(res_grb["tags"]))
+    monitor = "swift"
+    start_window = datetime.fromisoformat("2022-04-02")
+
+    dt = timedelta(days=1)
+    grb_tw = 5
+
+    grb_notices = get_notice(monitor)
+
+    for _ in range(30):
+
+        print("current date: {}".format(start_window))
+        print()
+        grb_counterparts = detect_grb_counterparts(
+            grb_notices, monitor, start_window, grb_tw
+        )
+
+        print(grb_counterparts)
+        print()
+        print()
+
+        print(Counter(grb_counterparts["tags"]))
+        print()
+        print()
+
+        start_window += dt

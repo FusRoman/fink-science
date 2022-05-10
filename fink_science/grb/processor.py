@@ -1,7 +1,9 @@
+import re
 import string
 import pandas as pd
+import json
+from datetime import datetime
 
-from grb_catalog import get_notice, get_grb_in_tw
 from astropy.time import Time, TimeDelta
 
 from pyspark.sql.functions import pandas_udf
@@ -9,11 +11,22 @@ from pyspark.sql.types import *  # noqa: F403
 from pyspark.sql import functions as F  # noqa: F401
 from pyspark.sql import SparkSession  # noqa: F401
 
-import json
+from fink_utils.xmatch.simbad import return_list_of_eg_host
 
-from grb_assoc import cross_match_space_and_time
+from grb_assoc import cross_match_space_and_time, grb_notices_getter
+from grb_catalog import get_notice, get_grb_in_tw
 
-def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb_bc: pd.DataFrame, monitor: string, grb_tw: int)-> pd.DataFrame:
+
+def grb_associations(
+    ra: list,
+    dec: list,
+    jdstarthist: list,
+    objectId: list,
+    grb_bc: pd.DataFrame,
+    monitor: string,
+    start_grb_tw: datetime,
+    grb_tw: int,
+) -> pd.DataFrame:
     """
     Associates ztf objects and grb events by temporal and spatial cross-match.
 
@@ -32,7 +45,10 @@ def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb
     monitor : string
         the name of the grb monitor used to download the catalog
     grb_tw : integer
-        the bottom limit of the time window
+        the bottom limit of the time window, in days
+    start_grb_tw : datetime
+        The start date of the time window, all the ztf alerts that respect jdstarthist >= (start_grb_tw - grb_tw) and jd <= start_grb_tw
+        are tested for the association with a grb.
 
     Return
     ------
@@ -41,9 +57,9 @@ def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb
             - firstly, a tag that indicates what process has produced the associations
                 'proba-based-cross-match' -> the grb has been associated by probability.
                 'fast-transient-based-cross-match' -> the grb has been associated because
-                    the ztf alerts fall within the grb error box, has a low associations 
+                    the ztf alerts fall within the grb error box, has a low associations
                     probability but behave like a fast transient.
-            - secondly, for the ztf object associated with a grb events by probability, 
+            - secondly, for the ztf object associated with a grb events by probability,
                 one return all the following informations :
                     - trigger number of the grb event
                     - probability that the ztf object and grb event can be associated in general
@@ -54,11 +70,12 @@ def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb
                     - sigma error of the above probability
                 As a ztf alert can fall within multiples error boxes if two or more grb events occurs closely,
                 one return a list for all of the above items
-        
+
         In case of non associations, one return the 'No match' tag and empty lists for the probabilities.
     """
     day_sec = 24 * 3600 * grb_tw
-    bottomlimit_window = Time.now().jd - TimeDelta(day_sec, format="sec").jd
+    start_wd_astropy = Time(start_grb_tw, scale='utc').jd
+    bottomlimit_window = start_wd_astropy - TimeDelta(day_sec, format="sec").jd
 
     grb_schema = StructType(
         [
@@ -79,7 +96,9 @@ def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb
         )
 
         grb_res_assoc = ztf_pdf.apply(
-            lambda x: cross_match_space_and_time(x, grb_notices, monitor, bottomlimit_window),
+            lambda x: cross_match_space_and_time(
+                x, grb_notices, monitor, start_wd_astropy, bottomlimit_window
+            ),
             axis=1,
             result_type="expand",
         ).rename({0: "tags", 1: "grb_association"}, axis=1)
@@ -91,15 +110,23 @@ def grb_associations(ra: list, dec: list, jdstarthist: list, objectId: list, grb
 
 if __name__ == "__main__":
 
+    import time as t
+
     print("get grb notices")
 
-    monitor = "fermi"
+    monitor = "swift"
+    start_window = datetime.fromisoformat("2021-02-11")
     grb_tw = 5
 
     grb_notices = get_notice(monitor)
 
-    grb_notices = get_grb_in_tw(grb_notices, monitor, grb_tw)
-    print(grb_notices)
+    grb_notices = get_grb_in_tw(grb_notices, monitor, start_window, grb_tw)
+
+    # cast the columns to numeric types
+    get_num_cols = list(grb_notices_getter(monitor))[:-1]
+    grb_notices[get_num_cols] = grb_notices[get_num_cols].apply(pd.to_numeric)
+
+    print("nb grb in the time window : {}".format(len(grb_notices)))
 
     # load alerts from HBase, best way to do
 
@@ -117,33 +144,48 @@ if __name__ == "__main__":
         SparkSession.builder.master(master_adress).appName("grb_module").getOrCreate()
     )
 
+    spark.sparkContext.setLogLevel("ERROR")
+
+    t_before = t.time()
     df = (
         spark.read.option("catalog", catalog)
         .format("org.apache.hadoop.hbase.spark")
         .option("hbase.spark.use.hbasecontext", False)
         .option("hbase.spark.pushdown.columnfilter", True)
         .load()
+        .repartition(5000)
     )
+    print("loading time: {}".format(t.time() - t_before))
+    print()
 
-    request_class = ["SN candidate", "Ambiguous", "Unknown", "Solar System candidate"]
+    request_class = return_list_of_eg_host() + [
+        "Ambiguous",
+        "Solar System candidate",
+        "SN candidate",
+    ]
 
-    now = Time.now().jd
-    yesterday = now - TimeDelta(3600 * 36, format="sec").jd
+    start_wd_astropy = Time(start_window, scale='utc').jd
+    yesterday = start_wd_astropy - TimeDelta(3600 * 36, format="sec").jd
     class_pdf = []
 
     for _class in request_class:
         class_pdf.append(
             df.filter(
                 df["class_jd_objectId"] >= "{}_{}".format(_class, yesterday)
-            ).filter(df["class_jd_objectId"] < "{}_{}".format(_class, now))
+            ).filter(df["class_jd_objectId"] < "{}_{}".format(_class, start_wd_astropy))
         )
+
+    print()
+    for class_name, sc_class in zip(request_class, class_pdf):
+        print("class {} : nb alerts = {}".format(class_name, sc_class.count()))
+    print()
 
     grb_bc = spark.sparkContext.broadcast(grb_notices)
 
     p_grb_list = []
     for alert_class in class_pdf:
 
-        alert_class = alert_class.repartition(1000)
+        alert_class = alert_class
 
         p_grb = alert_class.withColumn(
             "grb_score",
@@ -154,7 +196,7 @@ if __name__ == "__main__":
                 alert_class.objectId,
                 grb_bc,
                 monitor,
-                grb_tw
+                grb_tw,
             ),
         )
 
@@ -177,11 +219,12 @@ if __name__ == "__main__":
         )
         p_grb_list.append(p_grb)
 
-
-    print([sc_p_grb.rdd.getNumPartitions() for sc_p_grb in p_grb_list])
+    t_before = t.time()
     res_grb = pd.concat([sc_p_grb.toPandas() for sc_p_grb in p_grb_list])
+    print("spark jobs total time: {}".format(t.time() - t_before))
 
     print(res_grb)
 
     from collections import Counter
+
     print(Counter(res_grb["tags"]))

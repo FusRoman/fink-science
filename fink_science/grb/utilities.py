@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 
 
-def request_fink(objectid: string)-> pd.DataFrame:
+def request_fink(objectid: string) -> pd.DataFrame:
     """
     Retrieve the history of an object.
 
@@ -44,5 +44,3 @@ def request_fink(objectid: string)-> pd.DataFrame:
     )
 
     return object_history
-
-

@@ -10,7 +10,8 @@ from astropy.time import Time
 from grb_calc import p_ser_grb_vect, sig_est, compute_rate
 from utilities import request_fink
 
-def grb_notices_getter(monitor: string)-> tuple:
+
+def grb_notices_getter(monitor: string) -> tuple:
     """
     Return the column names of the grb catalog corresponding to the given monitor.
     Return also the grb trigger rate of the corresponding monitor (in trig/year).
@@ -51,9 +52,15 @@ def grb_notices_getter(monitor: string)-> tuple:
         raise ValueError("monitor must be 'fermi' of 'swift', not {}".format(monitor))
 
 
-def cross_match_space_and_time(ztf_rows: pd.Series, grb_notices: pd.DataFrame, monitor: string, bottomlimit_window: float)-> tuple:
+def cross_match_space_and_time(
+    ztf_rows: pd.Series,
+    grb_notices: pd.DataFrame,
+    monitor: string,
+    start_tw: float,
+    bottomlimit_window: float,
+) -> tuple:
     """
-    Associates a ztf object with one or more grb events. 
+    Associates a ztf object with one or more grb events.
 
     Parameters
     ----------
@@ -67,8 +74,9 @@ def cross_match_space_and_time(ztf_rows: pd.Series, grb_notices: pd.DataFrame, m
         the grb catalog
     monitor : string
         the grb monitor corresponding to the catalog
+    start_tw: the start date of the searching time window, in julian date.
     bottomlimit_window : float
-        the bottom limit of the time window to filter late alerts
+        the bottom limit of the time window to filter late alerts, in julian date.
 
     Returns
     -------
@@ -77,9 +85,9 @@ def cross_match_space_and_time(ztf_rows: pd.Series, grb_notices: pd.DataFrame, m
             - firstly, a tag that indicates what process has produced the associations
                 'proba-based-cross-match' -> the grb has been associated by probability.
                 'fast-transient-based-cross-match' -> the grb has been associated because
-                    the ztf alerts fall within the grb error box, has a low associations 
+                    the ztf alerts fall within the grb error box, has a low associations
                     probability but behave like a fast transient.
-            - secondly, for the ztf object associated with a grb events by probability, 
+            - secondly, for the ztf object associated with a grb events by probability,
                 one return all the following informations :
                     - trigger number of the grb event
                     - probability that the ztf object and grb event can be associated in general
@@ -90,7 +98,7 @@ def cross_match_space_and_time(ztf_rows: pd.Series, grb_notices: pd.DataFrame, m
                     - sigma error of the above probability
                 As a ztf alert can fall within multiples error boxes if two or more grb events occurs closely,
                 one return a list for all of the above items
-        
+
         In case of non associations, one return the 'No match' tag and empty lists for the probabilities.
     """
 
@@ -103,7 +111,7 @@ def cross_match_space_and_time(ztf_rows: pd.Series, grb_notices: pd.DataFrame, m
     ) = grb_notices_getter(monitor)
 
     # remove ztf alerts with a start variation time far away from the beginning of the grb time window
-    if ztf_rows["jdstarthist"] - bottomlimit_window > 0:
+    if (ztf_rows["jdstarthist"] >= bottomlimit_window) and (ztf_rows["jd"] <= start_tw):
 
         grb_coord = SkyCoord(
             grb_notices[select_grb_ra], grb_notices[select_grb_dec], unit=u.degree
@@ -175,7 +183,7 @@ def cross_match_space_and_time(ztf_rows: pd.Series, grb_notices: pd.DataFrame, m
                     ]
                 else:
                     objectid = ztf_rows["objectId"]
-                    alert_history = request_fink(objectid)                   
+                    alert_history = request_fink(objectid)
 
                     # search for the detection of fast transient in the error box of the grb.
                     mag_test = compute_rate(alert_history)
@@ -190,13 +198,13 @@ def cross_match_space_and_time(ztf_rows: pd.Series, grb_notices: pd.DataFrame, m
                             [],
                         ]
                     else:
-                        return "No match", []
+                        return "Not behave like a fast transient", []
 
             else:
-                return "No match", []
+                return "Before the GRB trigger time", []
 
         else:
-            return "No match", []
+            return "No in any GRB error box", []
 
     else:
-        return "No match", []
+        return "Not close at all of a GRB", []

@@ -34,11 +34,12 @@ def get_notice(grb_monitor: string) -> pd.DataFrame:
 
 
 def get_grb_in_tw(
-    grb_data: pd.DataFrame, monitor: string, time_window: int
+    grb_data: pd.DataFrame, monitor: string, start_window: datetime, time_window: int
 ) -> pd.DataFrame:
     """
     Restrict the grb catalog to keep only the grb in the time window. The time window is set to be
-    between the time window parameters and the current day.
+    between the time window parameters and the start_window.
+    All the grb that respect {(start_window - time_window) < trigger time < start_window} are return.
 
     Parameters
     ----------
@@ -46,8 +47,10 @@ def get_grb_in_tw(
         the grb catalog
     monitor : string
         the monitor corresponding to the catalog
+    start_window : datetime
+        the start date of the time window
     time_window : int
-        the time window in day corresponding to the bottom limit
+        the time window in day corresponding to the bottom limit. The bottom limit of the time window are computed as (start_window - time_window)
 
     Returns
     -------
@@ -82,9 +85,12 @@ def get_grb_in_tw(
 
     with pd.option_context("mode.chained_assignment", None):
         grb_data["Trig Time"] = pd.to_datetime(grb_data["Trig Time"], yearfirst=True)
-    bottomlimit_window = datetime.datetime.now() - datetime.timedelta(days=time_window)
 
-    grb_data = grb_data[grb_data["Trig Time"] > bottomlimit_window].reset_index(
-        drop=True
-    )
+    # compute the bottom limit
+    bottomlimit_window = start_window - datetime.timedelta(days=time_window)
+
+    grb_data = grb_data[
+        (grb_data["Trig Time"] >= bottomlimit_window)
+        & (grb_data["Trig Time"] <= start_window)
+    ].reset_index(drop=True)
     return grb_data

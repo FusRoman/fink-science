@@ -119,7 +119,15 @@ def compute_rate(ztf_rows: pd.Series) -> bool:
     The mag rate are computed between the valid detection
     and between the first valid detection and the last upper limit.
 
+    Parameters
+    ----------
+    ztf_rows : pandas Series
+        an alerts
 
+    Return
+    ------
+    is_fast_transient : boolean
+        return true if the alert behave like a fast transient or not
     """
 
     mag_rate = []

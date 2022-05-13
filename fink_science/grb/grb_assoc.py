@@ -122,8 +122,11 @@ def cross_match_space_and_time(
         grb_error_box = grb_notices[select_grb_error]
 
         # test if some ztf alerts fall in the error box of the grb
+
+        ## 1.5 * grb_error_box
+        ## en fonction du monitor, changer les unités : fermi en degrées et swift en arcminute
         test_assoc_grb = (
-            ztf_coords.separation(grb_coord).arcminute < grb_error_box * u.arcminute
+            ztf_coords.separation(grb_coord).degree < grb_error_box * u.degree * 1.5
         )
         sep_associated_grb = grb_notices[test_assoc_grb]
 
@@ -190,8 +193,9 @@ def cross_match_space_and_time(
                     if mag_test:
                         return "fast-transient-based-cross-match", [
                             grb_id.tolist(),
-                            [],
-                            [],
+                            # ajouter la proba p_ser
+                            p_ser[0][cut_grb].tolist(),
+                            sigma_p_ser_array[cut_grb].tolist(),
                             [],
                             [],
                             [],

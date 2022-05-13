@@ -67,6 +67,8 @@ def get_grb_in_tw(
             grb_data["Trig Time"] = (
                 grb_data[("TRIGGER", "Date")] + " " + grb_data[("TRIGGER", "Time UT")]
             )
+        
+        access_trig_num = ("TRIGGER", "TrigNum")
 
     if monitor == "swift":
         test_date = (
@@ -83,6 +85,8 @@ def get_grb_in_tw(
                 + grb_data[("GRB/TRIGGER", "Time UT")]
             )
 
+        access_trig_num = ("GRB/TRIGGER", "Trig")
+
     with pd.option_context("mode.chained_assignment", None):
         grb_data["Trig Time"] = pd.to_datetime(grb_data["Trig Time"], yearfirst=True)
 
@@ -93,4 +97,7 @@ def get_grb_in_tw(
         (grb_data["Trig Time"] >= bottomlimit_window)
         & (grb_data["Trig Time"] <= start_window)
     ].reset_index(drop=True)
+
+    grb_data = grb_data.drop_duplicates([access_trig_num], keep="first")
+
     return grb_data

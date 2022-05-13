@@ -122,6 +122,11 @@ def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width
 
     grb_notices = get_grb_in_tw(grb_notices, monitor, start_window, grb_window_width)
 
+    print(grb_notices[[("TRIGGER", "TrigNum"), ("OBSERVATION", "RA(J2000)[deg]"), ("OBSERVATION", "Dec(J2000)[deg]")]])
+
+    print()
+    print()
+
     # cast the columns to numeric types
     get_num_cols = list(grb_notices_getter(monitor))[:-1]
     grb_notices[get_num_cols] = grb_notices[get_num_cols].apply(pd.to_numeric)
@@ -160,7 +165,7 @@ def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width
     master_adress = "mesos://vm-75063.lal.in2p3.fr:5050"
 
     spark = (
-        SparkSession.builder.master(master_adress).appName("grb_module").getOrCreate()
+        SparkSession.builder.master(master_adress).appName("grb_module_{}".format(monitor)).getOrCreate()
     )
 
     spark.sparkContext.setLogLevel("FATAL")
@@ -177,9 +182,9 @@ def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width
     print("loading time: {}".format(t.time() - t_before))
     print()
 
-    request_class = return_list_of_eg_host() + [
-        "Ambiguous",
-        "Solar System candidate",
+    request_class = [# return_list_of_eg_host() + [
+        # "Ambiguous",
+        # "Solar System candidate",
         "SN candidate",
     ]
 
@@ -269,16 +274,20 @@ if __name__ == "__main__":
 
     import time as t
     from collections import Counter
+    import sys
 
-    monitor = "swift"
-    start_window = datetime.fromisoformat("2022-04-02")
+    monitor = sys.argv[1]
+    print("start grb module with the {} monitor".format(monitor))
+    print()
+    
+    start_window = datetime.fromisoformat("2021-02-05")
 
     dt = timedelta(days=1)
     grb_tw = 5
 
     grb_notices = get_notice(monitor)
 
-    for _ in range(30):
+    for _ in range(10):
 
         print("current date: {}".format(start_window))
         print()
@@ -291,6 +300,18 @@ if __name__ == "__main__":
         print()
 
         print(Counter(grb_counterparts["tags"]))
+        print()
+        print()
+
+        ft_objId = grb_counterparts[grb_counterparts["tags"] == "fast-transient-based-cross-match"]
+
+        proba_objId = grb_counterparts[grb_counterparts["tags"] == "proba-based-cross-match"]["objectId"]
+
+        print(grb_counterparts[grb_counterparts["objectId"].isin(proba_objId)][["objectId", "GRB_trignum", "p_ser", "sigma_p_ser"]])
+
+        print()
+        print("BINGO !!!!")
+        print(ft_objId[ft_objId["objectId"] == "ZTF21aagwbjr"])
         print()
         print()
 

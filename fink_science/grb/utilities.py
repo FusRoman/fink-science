@@ -24,7 +24,7 @@ def request_fink(objectid: string) -> pd.DataFrame:
             "output-format": "json",
             "withupperlim": True,
             "withcutouts": False,
-            "columns": "i:objectId,i:fid,i:jd,i:magpsf,i:sigmapsf,i:magnr,i:sigmagnr,i:magzpsci,i:isdiffpos",
+            "columns": "i:objectId,i:fid,i:jd,i:magpsf,i:sigmapsf,i:magnr,i:sigmagnr,i:magzpsci,i:isdiffpos,i:diffmaglim",
         },
     )
 
@@ -44,3 +44,10 @@ def request_fink(objectid: string) -> pd.DataFrame:
     )
 
     return object_history
+
+
+if __name__ == "__main__":
+
+    df = request_fink("ZTF21aagubnt")
+
+    print(df)

@@ -15,7 +15,7 @@ from pyspark.sql import SparkSession  # noqa: F401
 from fink_utils.xmatch.simbad import return_list_of_eg_host
 
 from grb_assoc import cross_match_space_and_time, grb_notices_getter
-from grb_catalog import get_notice, get_grb_in_tw
+from grb_catalog import get_notice, grb_filter
 
 
 def grb_associations(
@@ -118,20 +118,41 @@ def grb_associations(
     return aux_grb_score(ra, dec, jd, jdstarthist, objectId)
 
 
-def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width):
+def detect_grb_counterparts(grb_notices: pd.DataFrame, monitor: string, start_window: datetime, grb_window_width: int)-> pd.DataFrame:
+    """
+    Cross-match the grb notices with the ztf alerts for a given day. Return the associations probability or the alerts that behave like fast transient.
 
-    grb_notices = get_grb_in_tw(grb_notices, monitor, start_window, grb_window_width)
+    Parameters
+    ----------
+    grb_notices : DataFrame
+        the gamma ray notices filtered by the quality cuts and the time windows
+    monitor : string
+        the given space monitor (must be Fermi or Swift)
+    start_window : datetime
+        the requested date for the ztf alerts
+    grb_window_width : integer
+        the size of the time window (in days)
 
-    print(grb_notices[[("TRIGGER", "TrigNum"), ("OBSERVATION", "RA(J2000)[deg]"), ("OBSERVATION", "Dec(J2000)[deg]")]])
+    Return
+    ------
+    res_grb : DataFrame
+        the results spatio-temporal cross-match between the gcn of the given monitor and the ztf alerts of the given start date. 
+    """
+    grb_notices = grb_filter(grb_notices, monitor, start_window, grb_window_width)
 
-    print()
-    print()
+    # print(grb_notices[["TrigNum", "gm_ra", "gm_dec"]])
+
+    # print()
+    # print()
 
     # cast the columns to numeric types
-    get_num_cols = list(grb_notices_getter(monitor))[:-1]
-    grb_notices[get_num_cols] = grb_notices[get_num_cols].apply(pd.to_numeric)
+    # get_num_cols = list(grb_notices_getter(monitor))[:-1]
+    num_cols = ["gm_ra", "gm_dec", "gm_error"]
+    if monitor == "swift":
+        num_cols += ["xrt_ra", "xrt_dec", "xrt_error"]
+    grb_notices[num_cols] = grb_notices[num_cols].apply(pd.to_numeric)
 
-    print("nb grb in the time window : {}".format(len(grb_notices)))
+    # print("nb grb in the time window : {}".format(len(grb_notices)))
 
     if len(grb_notices) == 0:
         return pd.DataFrame(
@@ -150,7 +171,7 @@ def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width
                 "sp_ser",
                 "sigma_sp_ser",
             ]
-        )
+    )
 
     # load alerts from HBase, best way to do
 
@@ -170,7 +191,7 @@ def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width
 
     spark.sparkContext.setLogLevel("FATAL")
 
-    t_before = t.time()
+    # t_before = t.time()
     df = (
         spark.read.option("catalog", catalog)
         .format("org.apache.hadoop.hbase.spark")
@@ -179,12 +200,12 @@ def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width
         .load()
         .repartition(500)
     )
-    print("loading time: {}".format(t.time() - t_before))
-    print()
+    # print("loading time: {}".format(t.time() - t_before))
+    # print()
 
-    request_class = [# return_list_of_eg_host() + [
-        # "Ambiguous",
-        # "Solar System candidate",
+    request_class = return_list_of_eg_host() + [
+        "Ambiguous",
+        "Solar System candidate",
         "SN candidate",
     ]
 
@@ -207,8 +228,6 @@ def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width
 
         if alert_class.count() == 0:
             continue
-
-        alert_class = alert_class
 
         p_grb = alert_class.withColumn(
             "grb_score",
@@ -263,9 +282,9 @@ def detect_grb_counterparts(grb_notices, monitor, start_window, grb_window_width
             ]
         )
 
-    t_before = t.time()
+    # t_before = t.time()
     res_grb = pd.concat([sc_p_grb.toPandas() for sc_p_grb in p_grb_list])
-    print("spark jobs total time: {}".format(t.time() - t_before))
+    # print("spark jobs total time: {}".format(t.time() - t_before))
 
     return res_grb
 
@@ -280,6 +299,8 @@ if __name__ == "__main__":
     print("start grb module with the {} monitor".format(monitor))
     print()
     
+    
+    # starting date where is located the confirmed GRB observable in Fink
     start_window = datetime.fromisoformat("2021-02-05")
 
     dt = timedelta(days=1)
@@ -295,9 +316,9 @@ if __name__ == "__main__":
             grb_notices, monitor, start_window, grb_tw
         )
 
-        print(grb_counterparts)
-        print()
-        print()
+        # print(grb_counterparts)
+        # print()
+        # print()
 
         print(Counter(grb_counterparts["tags"]))
         print()
@@ -305,13 +326,13 @@ if __name__ == "__main__":
 
         ft_objId = grb_counterparts[grb_counterparts["tags"] == "fast-transient-based-cross-match"]
 
-        proba_objId = grb_counterparts[grb_counterparts["tags"] == "proba-based-cross-match"]["objectId"]
+        proba_objId = grb_counterparts[grb_counterparts["tags"] == "proba-based-cross-match"]
 
         print(grb_counterparts[grb_counterparts["objectId"].isin(proba_objId)][["objectId", "GRB_trignum", "p_ser", "sigma_p_ser"]])
 
         print()
         print("BINGO !!!!")
-        print(ft_objId[ft_objId["objectId"] == "ZTF21aagwbjr"])
+        print(proba_objId[proba_objId["objectId"] == "ZTF21aagwbjr"])
         print()
         print()
 

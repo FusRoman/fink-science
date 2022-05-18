@@ -102,32 +102,41 @@ def cross_match_space_and_time(
         In case of non associations, one return the 'No match' tag and empty lists for the probabilities.
     """
 
-    (
-        select_grb_num,
-        select_grb_ra,
-        select_grb_dec,
-        select_grb_error,
-        grb_det_rate,
-    ) = grb_notices_getter(monitor)
-
     # remove ztf alerts with a start variation time far away from the beginning of the grb time window
     if (ztf_rows["jdstarthist"] >= bottomlimit_window) and (ztf_rows["jd"] <= start_tw):
 
-        grb_coord = SkyCoord(
-            grb_notices[select_grb_ra], grb_notices[select_grb_dec], unit=u.degree
-        )
+        if monitor == "fermi":
+            grb_det_rate = 250
+            grb_coord = SkyCoord(
+                grb_notices["gm_ra"], grb_notices["gm_dec"], unit=u.degree
+            )
+        
+        if monitor == "swift":
+            grb_det_rate = 100
+            grb_coord = SkyCoord(
+                grb_notices["xrt_ra"], grb_notices["xrt_dec"], unit=u.degree
+            )
 
         ztf_coords = SkyCoord(ztf_rows["ra"], ztf_rows["dec"], unit=u.degree)
-
-        grb_error_box = grb_notices[select_grb_error]
 
         # test if some ztf alerts fall in the error box of the grb
 
         ## 1.5 * grb_error_box
         ## en fonction du monitor, changer les unités : fermi en degrées et swift en arcminute
-        test_assoc_grb = (
-            ztf_coords.separation(grb_coord).degree < grb_error_box * u.degree * 1.5
+
+        if monitor == "fermi":
+            current_grb_error = "gm_error"
+            grb_error_box = grb_notices[current_grb_error]
+            test_assoc_grb = (
+                ztf_coords.separation(grb_coord).degree < grb_error_box * u.degree * 1.5
+            )
+        elif monitor == "swift":
+            current_grb_error = "xrt_error"
+            grb_error_box = grb_notices[current_grb_error]
+            test_assoc_grb = (
+                ztf_coords.separation(grb_coord).degree < grb_error_box * grb_notices["precision"] * 1.5
         )
+
         sep_associated_grb = grb_notices[test_assoc_grb]
 
         # keep only the grb with a ztf alerts that fall within the error box
@@ -141,8 +150,8 @@ def cross_match_space_and_time(
 
             # keep only the ztf alerts with a start variation time after the grb emission
             if len(time_associated_grb) > 0:
-                grb_id = time_associated_grb[select_grb_num].values
-                grb_error_box = time_associated_grb[select_grb_error].values
+                grb_id = time_associated_grb["TrigNum"].values
+                grb_error_box = time_associated_grb[current_grb_error].values
 
                 # convert the delay from day in year
                 delay_year = time_associated_grb["delay"] / 365.25
@@ -186,7 +195,10 @@ def cross_match_space_and_time(
                     ]
                 else:
                     objectid = ztf_rows["objectId"]
-                    alert_history = request_fink(objectid)
+                    try:
+                        alert_history = request_fink(objectid)
+                    except KeyError:
+                        return "error request: {}".format(objectid), []
 
                     # search for the detection of fast transient in the error box of the grb.
                     mag_test = compute_rate(alert_history)
